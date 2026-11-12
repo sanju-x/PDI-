@@ -4,7 +4,31 @@ One-page website (`index.html`) for stock ageing, carry-forward stock, PDI, tran
 
 ## Load the reports from Google Drive automatically
 
-`_worker.js` is a small server that runs on Cloudflare with the site. It reads the PDI Drive folder with a Google **service account** (a robot Google account that can only read what you share with it). The page then loads the newest stock, IBND, final plan and job card files on its own, re-checks every 10 minutes, and only downloads a file again when it has changed.
+`_worker.js` is a small server that runs on Cloudflare with the site. A browser cannot download Drive files from another website directly, so the page asks this server, and the server fetches the files from Drive.
+
+### Option 1: public links (default, nothing to set up)
+
+The server already knows these files, all shared as **Anyone with the link → Viewer**:
+
+| Report | Drive file |
+|---|---|
+| Stock | stock_report.xlsx (`1zNqp-9UlA2THEuOGXVtfTFnlPSdvmXQ9`) |
+| IBND | ibnd_report.xlsx (`1WAC-ubcYUNUkj4SiJiWShcmizdUCBU89`) |
+| Final plan | Final_Plan_Report.xlsx (`13OviUV91xngJ4uYl9mc4uHVn_gULyLvr`) |
+| Job card | jobcard_work_report.xlsx (`1HRbZT0NEnRYzKG4AC-P7MaO80cpnTjMh`) |
+| Delivery | delivery Report Google Sheet (`1Kpi75PeN2jeh_8PzsgmlPcyrf85v7s7VV3Q4HrnMwZU`) |
+
+Deploy the folder and the reports load on their own, re-checked every 10 minutes and on **Refresh now**.
+
+**Updating the files each day: keep the same link.** In Drive, right-click the file → **File information → Manage versions → Upload new version**, and pick the new Excel file. The link and ID stay the same, so the site keeps working. Uploading it as a new file instead gives it a new link.
+
+If a file's link does change, set it in Cloudflare (Pages project → **Settings → Variables and Secrets** → Add, type Text): `STOCK_FILE`, `IBND_FILE`, `PLAN_FILE`, `JOBCARD_FILE` or `DELIVERY_SHEET`, with the new Drive link as the value. Then create a new deployment.
+
+Anyone who has one of these Drive links can open that file. Protect the site itself with Cloudflare Access (below).
+
+### Option 2: private files with a service account
+
+Use this to keep the Drive files private, and to always pick the newest file in the folder even when it is uploaded as a new file. When the `GOOGLE_SERVICE_ACCOUNT` secret is set, the server uses it instead of the public links.
 
 **1. Create the service account (Google Cloud, one time)**
 1. Open console.cloud.google.com and create a project, for example `pdi-yard`.

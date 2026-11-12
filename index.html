@@ -1280,16 +1280,18 @@ async function fetchServer(force){
     if(!f){if(!hasData(k))S.src[k]={state:"error",msg:`No ${SHEETS[k].label} found in the Drive folder.`};soon();return}
     S.files[k]={id:f.id,title:f.name,modifiedTime:f.modifiedTime,size:f.size};
     const stamp=f.id+"|"+f.modifiedTime;
-    if(!force&&ls("pdi.file."+k)===stamp&&(S.snap[k]||S.live[k])){S.src[k]={state:"live"};soon();return}
+    // a file whose change time is known is re-read only when it changed; public links give no time, so they are re-read each check
+    if(!force&&f.modifiedTime&&ls("pdi.file."+k)===stamp&&(S.snap[k]||S.live[k])){S.src[k]={state:"live"};soon();return}
     S.src[k]={state:"loading"};soon();
     try{
-      const r=await fetch("/api/drive?id="+encodeURIComponent(f.id),{cache:"no-store"});
+      const r=await fetch("/api/drive?id="+encodeURIComponent(f.id)+(force?"&fresh=1":""),{cache:"no-store"});
       if(!r.ok){const j=await r.json().catch(()=>({}));throw new Error(j.message||j.error||("HTTP "+r.status))}
       const ct=r.headers.get("content-type")||"";const buf=await r.arrayBuffer();
       let aoa;
       if(/csv|text/.test(ct))aoa=parseCSV(new TextDecoder().decode(buf));
       else{if(!window.XLSX)throw new Error("Excel reader didn't load");const wb=XLSX.read(new Uint8Array(buf),{type:"array",cellDates:false,dense:true});aoa=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:""})}
-      if(ingest(k,aoa,Date.parse(f.modifiedTime)||Date.now(),hash(stamp)))ls("pdi.file."+k,stamp);
+      const mod=r.headers.get("x-file-modified");
+      if(ingest(k,aoa,Date.parse(f.modifiedTime)||Date.parse(mod)||Date.now(),f.modifiedTime?hash(stamp):hash(stamp+buf.byteLength+(mod||""))))ls("pdi.file."+k,stamp);
     }catch(e){S.src[k]={state:"error",msg:`Couldn't read the ${SHEETS[k].label} from Drive (${String(e&&e.message||e).slice(0,120)}).`};soon()}
   });
   await Promise.all(jobs);render();return true;
