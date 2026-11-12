@@ -890,20 +890,23 @@ function hoRow(p){
 /* ---------- Data tab ---------- */
 function uploadCard(){
   if(!S.standalone)return "";
-  return `<div class="card c12 upcard"><div class="card-h"><h2>Load reports</h2><span class="note">Pick the day's Excel files (stock, IBND, final plan, job card, delivery). Several at once is fine. They are read in this browser only and kept here until you load newer ones.</span></div>
+  const note=S.server?`<p class="banner real"><b>Drive connected</b><span>Reports are read from the PDI Drive folder automatically, every 10 minutes and when you click Refresh now. Loading files here is only needed for a one-off check.</span></p>`
+    :S.serverMsg?`<p class="banner"><b>Drive not connected</b><span>${esc(S.serverMsg)}</span></p>`:"";
+  return note+`<div class="card c12 upcard"><div class="card-h"><h2>Load reports</h2><span class="note">Pick the day's Excel files (stock, IBND, final plan, job card, delivery). Several at once is fine. They are read in this browser only and kept here until you load newer ones.</span></div>
     <label class="drop" id="drop" for="upIn"><input type="file" id="upIn" multiple accept=".xlsx,.xls,.csv"><b>Choose files</b> or drop them here<span>stock_report.xlsx · ibnd_report.xlsx · Final_Plan_Report.xlsx · jobcard_work_report.xlsx · delivery report</span></label>
     <div id="upMsg" class="ffl"></div></div>`;
 }
 function dataSection(){
   const card=k=>{const s=S.src[k]||{};const live=S.live[k],snap=S.snap[k];
-    const status=s.state==="live"?`<span class="chip ok">Live</span> <span class="muted">${num(live.rows.length)} rows · read ${fmtT(live.at)}</span>`
+    const cur=live||snap;
+    const status=s.state==="live"&&cur?`<span class="chip ok">Live</span> <span class="muted">${num(cur.rows.length)} rows · read ${fmtT(cur.at)}</span>`
       :s.state==="loading"||!s.state?`<span class="chip info">Loading…</span>`
       :`<span class="chip ${snap?"warn":"bad"}">${snap?"Showing last sync":"Not loaded"}</span> <span class="muted">${esc(s.msg||"")}</span>`;
     const fm=S.files[k];
     return `<div class="slot"><h4>${esc(SHEETS[k].label)}</h4>${fm?`<div class="st muted">${esc(fm.title)} · uploaded ${fm.modifiedTime?fmtT(Date.parse(fm.modifiedTime)):"—"}</div>`:""}<div class="st">${status}</div>
       ${snap?`<div class="st muted">Saved copy for the team: ${num(snap.rows.length)} rows · synced ${fmtT(snap.at)}</div>`:""}
       <div class="row" style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn" href="${fileUrl(k)}" target="_blank" rel="noopener">Open file</a></div></div>`};
-  return `<div class="grid">${uploadCard()}<div class="card c12"><div class="card-h"><h2>${S.standalone?"Reports":"Linked reports"}</h2><span class="note">Four Excel reports from the PDI Drive folder (newest file of each name) plus the delivery Google Sheet, read through your Google Drive connection every 5 minutes. The latest read is saved here so teammates without Drive access still see it.</span></div>
+  return `<div class="grid">${uploadCard()}<div class="card c12"><div class="card-h"><h2>${S.standalone?"Reports":"Linked reports"}</h2><span class="note">${S.standalone?(S.server?"Newest file of each report in the PDI Drive folder, plus the delivery sheet.":"Loaded from files in this browser."):""}${S.standalone?"":"Four Excel reports from the PDI Drive folder (newest file of each name) plus the delivery Google Sheet, read through your Google Drive connection every 5 minutes. The latest read is saved here so teammates without Drive access still see it."}</span></div>
     <div class="row" style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" id="refreshBtn" ${S.mcp||S.standalone?"":"disabled"}>Refresh now</button></div>
     <div class="imp">${Object.keys(SHEETS).map(card).join("")}
 </div></div>
@@ -934,7 +937,7 @@ function render(){
   const errs=Object.keys(SHEETS).filter(k=>S.src[k].state==="error");
   const anyLive=Object.keys(SHEETS).some(k=>S.src[k].state==="live");
   const banner=errs.length?`<div class="banner"><b>${S.standalone?(errs.length===Object.keys(SHEETS).length?"No reports loaded yet":"Some reports not loaded"):errs.length===Object.keys(SHEETS).length?"Live sheets unavailable":"Some sheets didn't load"}</b><span>${esc(S.src[errs[0]].msg||"")}${errs.some(k=>S.snap[k])?" Showing the last saved copy.":""}</span>${S.standalone?`<button class="btn primary" data-go="data">Load reports</button>`:S.mcp?`<button class="btn" id="retryBtn">Try again</button>`:""}</div>`
-    :anyLive?`<div class="banner real"><b>Live</b><span>Google Drive · stock, IBND, final plan, job card and delivery reports · read ${fmtT(Math.max(...Object.values(S.live).map(x=>x.at)))} · refreshes every 5 minutes</span></div>`:"";
+    :anyLive?`<div class="banner real"><b>Live</b><span>Google Drive · stock, IBND, final plan, job card and delivery reports · read ${fmtT(Math.max(0,...Object.keys(SHEETS).map(k=>(S.live[k]||S.snap[k]||{}).at||0)))} · refreshes every ${S.standalone?"10":"5"} minutes</span></div>`:"";
   let body="";
   switch(S.tab){
     case "overview":body=kpiRow(m,R)+`<div class="grid">${stockSection(m)}${hsrpSection(m)}<div class="card c4"><div class="card-h"><h2>Carry forward stock</h2><span class="note">stock received before 1st ${new Date().toLocaleString("en-IN",{month:"short"})}</span><button class="btn" data-go="stock" style="margin-left:auto">Stock detail</button></div>${anyStock()?carryTable(m.stock.filter(fStock)):noData("stock")}</div>${labourSection(m,R)}</div>`;break;
@@ -1148,7 +1151,7 @@ function startWatches(){
   },{cache:{staleTime:60000,gcTime:3600000},refetchInterval:600000});
 }
 let folderWatch=null;
-async function refreshAll(){if(S.standalone){fetchLinks();return}if(!S.mcp)return;ldTab="fresh data";ldUntil=Date.now()+900;setTimeout(updLoader,950);for(const k in SHEETS)S.src[k]={state:"loading"};render();
+async function refreshAll(){if(S.standalone){if(S.server){ldTab="fresh data";ldUntil=Date.now()+900;fetchServer(true)}else fetchLinks();return}if(!S.mcp)return;ldTab="fresh data";ldUntil=Date.now()+900;setTimeout(updLoader,950);for(const k in SHEETS)S.src[k]={state:"loading"};render();
   try{await S.mcp.invalidate(SERVER)}catch(e){startWatches()}toast("Refreshing from Google Drive…")}
 
 /* team snapshot in db so viewers without Drive see the latest read */
@@ -1261,9 +1264,39 @@ function localDb(){
       onSnapshot:(cb)=>{(subs[c]=subs[c]||[]).push(cb);ready.then(()=>cb(snap(c)));return ()=>{subs[c]=subs[c].filter(x=>x!==cb)}}
     })};
 }
+/* Website server (Cloudflare _worker.js): reads the PDI Drive folder with a Google service account.
+   Each report is downloaded only when its Drive file changed; otherwise the copy kept in this browser is used. */
+const DELIVERY_ID="1Kpi75PeN2jeh_8PzsgmlPcyrf85v7s7VV3Q4HrnMwZU";
+async function fetchServer(force){
+  let list;
+  try{const r=await fetch("/api/drive?list=1",{cache:"no-store"});
+    const j=await r.json().catch(()=>null);
+    if(!r.ok||!j||!j.files){S.serverMsg=r.status===404||!j?"":(j.message||j.error||("Server error "+r.status));return false}
+    list=j.files}catch(e){return false}
+  S.server=true;S.serverMsg="";
+  const pickFor=k=>k==="delivery"?list.find(f=>f.id===DELIVERY_ID||/deliver/i.test(f.name||"")):list.find(f=>SHEETS[k].match&&SHEETS[k].match.test(f.name||""));
+  const jobs=Object.keys(SHEETS).map(async k=>{
+    const f=pickFor(k);
+    if(!f){if(!hasData(k))S.src[k]={state:"error",msg:`No ${SHEETS[k].label} found in the Drive folder.`};soon();return}
+    S.files[k]={id:f.id,title:f.name,modifiedTime:f.modifiedTime,size:f.size};
+    const stamp=f.id+"|"+f.modifiedTime;
+    if(!force&&ls("pdi.file."+k)===stamp&&(S.snap[k]||S.live[k])){S.src[k]={state:"live"};soon();return}
+    S.src[k]={state:"loading"};soon();
+    try{
+      const r=await fetch("/api/drive?id="+encodeURIComponent(f.id),{cache:"no-store"});
+      if(!r.ok){const j=await r.json().catch(()=>({}));throw new Error(j.message||j.error||("HTTP "+r.status))}
+      const ct=r.headers.get("content-type")||"";const buf=await r.arrayBuffer();
+      let aoa;
+      if(/csv|text/.test(ct))aoa=parseCSV(new TextDecoder().decode(buf));
+      else{if(!window.XLSX)throw new Error("Excel reader didn't load");const wb=XLSX.read(new Uint8Array(buf),{type:"array",cellDates:false,dense:true});aoa=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:""})}
+      if(ingest(k,aoa,Date.parse(f.modifiedTime)||Date.now(),hash(stamp)))ls("pdi.file."+k,stamp);
+    }catch(e){S.src[k]={state:"error",msg:`Couldn't read the ${SHEETS[k].label} from Drive (${String(e&&e.message||e).slice(0,120)}).`};soon()}
+  });
+  await Promise.all(jobs);render();return true;
+}
 async function standalone(){
   S.standalone=true;
-  for(const k in SHEETS)S.src[k]=LINKS[k]?{state:"loading"}:{state:"error",msg:"Load this report on the Data tab."};
+  for(const k in SHEETS)S.src[k]={state:"loading"};
   $("#liveTxt").textContent="This browser";$("#live").classList.remove("off");
   const db=localDb();S.db=db;S.canWrite=true;
   render();
@@ -1278,6 +1311,10 @@ async function standalone(){
     soon();
   });
   db.collection("handover").onSnapshot(snap=>{const H={};for(const d of snap.docs)H[d.id]=d.data();S.handover=H;if(S.tab==="handover"||S.tab==="overview")soon()});
+  await db.ready;
+  if(await fetchServer()){setInterval(()=>fetchServer(),600000);return}
+  for(const k in SHEETS)if(!LINKS[k]&&!S.live[k])S.src[k]={state:"error",msg:"Load this report on the Data tab."};
+  render();
   fetchLinks();
 }
 
