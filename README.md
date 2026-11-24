@@ -118,3 +118,26 @@ Paste a Google **Sheet** link (not an .xlsx file in Drive) for any report. The s
 ## What stays in the browser
 
 Handover ticks, remarks and photos are saved in the browser where they were entered. They are not shared between computers on the website version. The claude.ai version of the dashboard shares them across the team.
+
+## Stock and IBND reports (added 14 Nov 2026)
+The Stock and IBND pages also read four reports from the second Drive folder. Each must be shared "Anyone with the link".
+To point at a different file, set the variable in Cloudflare Pages → Settings → Variables and Secrets (a Drive link or the file ID):
+
+| Variable | Report |
+|---|---|
+| BOOKING_FILE | Pending_booking_report.xlsx |
+| INVOICE_FILE | sales_invoice_report.xlsx |
+| TVP_STATUS_FILE | TVP STATUS.xlsx |
+| TVP_STOCK_FILE | TVP STOCK.xlsx |
+| DELIVERY_FILE | delivery_Report.xlsx (in the main PDI folder; read together with the delivery Google Sheet) |
+| HSRP_FILE | hsrp_report.xlsx (in the main PDI folder) |
+
+Service-account mode also lists the second folder (DRIVE_FOLDER_ID2).
+
+## Always reading the newest files (recommended)
+Public links point at one fixed file. When a report is uploaded as a NEW file (new link) instead of
+"Manage versions → Upload new version", the site keeps showing the old one.
+To make the site always pick the newest file of each report in both Drive folders:
+1. Share both Drive folders "Anyone with the link" (Viewer).
+2. In Google Cloud Console create an API key and enable the "Google Drive API" for it.
+3. In Cloudflare Pages → Settings → Variables and Secrets add GOOGLE_API_KEY (Secret) = that key, then redeploy.

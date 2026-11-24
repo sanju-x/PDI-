@@ -19,6 +19,7 @@
 //   GET /api/drive?id=FILE  → the file's bytes (Google Sheets are exported as CSV)
 
 const DEFAULT_FOLDER = "1IYtAvPPFMB3crzHoo-wJclC7IuZaeb0q";
+const DEFAULT_FOLDER2 = "1Kkm1ezevWiP_76q5e7vkMp-GjXj9x9lp"; // bookings, invoices, TVP
 const DEFAULT_EXTRA = "1Kpi75PeN2jeh_8PzsgmlPcyrf85v7s7VV3Q4HrnMwZU";
 const SHEET_MIME = "application/vnd.google-apps.spreadsheet";
 let tokenCache = { token: "", exp: 0 };
@@ -43,7 +44,13 @@ const PUBLIC_DEFAULTS = {
   ibnd:     ["IBND_FILE",      "1WAC-ubcYUNUkj4SiJiWShcmizdUCBU89",  "ibnd_report.xlsx"],
   pdi:      ["PLAN_FILE",      "13OviUV91xngJ4uYl9mc4uHVn_gULyLvr",  "Final_Plan_Report.xlsx"],
   jobs:     ["JOBCARD_FILE",   "1HRbZT0NEnRYzKG4AC-P7MaO80cpnTjMh",  "jobcard_work_report.xlsx"],
-  delivery: ["DELIVERY_SHEET", "1Kpi75PeN2jeh_8PzsgmlPcyrf85v7s7VV3Q4HrnMwZU", "delivery Report", "sheet"]
+  delivery: ["DELIVERY_SHEET", "1Kpi75PeN2jeh_8PzsgmlPcyrf85v7s7VV3Q4HrnMwZU", "delivery Report", "sheet"],
+  book:     ["BOOKING_FILE",   "1R0vC3UkcP_uwi28NLy5g1E-UtB_iq5U2",  "Pending_booking_report.xlsx"],
+  inv:      ["INVOICE_FILE",   "1NoRum7O3fZDgzFbP8-YeSE1UFdocHl_B",  "sales_invoice_report.xlsx"],
+  tvps:     ["TVP_STATUS_FILE","1wkUjkv1M2zVxGfSfDnsVnUdo1z_hpx9y",  "TVP_STATUS.xlsx"],
+  tvpk:     ["TVP_STOCK_FILE", "1E4YPkj9TObSAqHiBvtETcjJ2Oqlo4m2g",  "TVP_STOCK.xlsx"],
+  hsrpr:    ["HSRP_FILE",      "1pOFtvF24mXXDHM7jJcn7ZSu-9nU52v0o",  "hsrp_report.xlsx"],
+  delx:     ["DELIVERY_FILE",  "1FEm4wAk5Qnm52xgJlsXyfhiUqn4ygpz9",  "delivery_Report.xlsx"]
 };
 const idFrom = (v) => { const m = String(v || "").match(/\/d\/([A-Za-z0-9_-]{20,})|[?&]id=([A-Za-z0-9_-]{20,})|^([A-Za-z0-9_-]{20,})$/); return m ? (m[1] || m[2] || m[3]) : ""; };
 function publicFiles(env) {
@@ -74,15 +81,44 @@ async function publicDrive(url, env, ctx) {
   return res;
 }
 
+// C) API KEY (optional): set GOOGLE_API_KEY (a Google Cloud API key with the Drive API enabled) and share both
+//    Drive folders "Anyone with the link". The site then lists both folders and always reads the newest file of
+//    each report, even when a new upload gets a new file ID.
+async function apiKeyDrive(url, env, ctx) {
+  const key = env.GOOGLE_API_KEY;
+  const folders = [env.DRIVE_FOLDER_ID || DEFAULT_FOLDER, env.DRIVE_FOLDER_ID2 || DEFAULT_FOLDER2];
+  const api = (path) => fetch("https://www.googleapis.com/drive/v3/" + path + (path.includes("?") ? "&" : "?") + "key=" + encodeURIComponent(key));
+  const listAll = async () => {
+    const q = encodeURIComponent("(" + folders.map(f => `'${f}' in parents`).join(" or ") + ") and trashed = false");
+    const r = await api(`files?q=${q}&orderBy=modifiedTime desc&pageSize=100&fields=files(id,name,mimeType,modifiedTime,size)`);
+    if (!r.ok) throw new Error("Drive folder list failed (" + r.status + "). Share both folders 'Anyone with the link' and enable the Drive API for the key.");
+    const files = (await r.json()).files || [];
+    for (const f of publicFiles(env).filter(f => f.sheet)) if (!files.some(x => x.id === f.id)) files.push({ id: f.id, name: f.name, mimeType: SHEET_MIME, modifiedTime: "" });
+    return files;
+  };
+  if (url.searchParams.get("list")) return json({ mode: "apikey", files: await listAll() });
+  const id = url.searchParams.get("id") || "";
+  if (!/^[A-Za-z0-9_-]{10,}$/.test(id)) return json({ error: "bad_id" }, 400);
+  const files = await listAll();
+  const f = files.find(x => x.id === id);
+  if (!f) return json({ error: "not_allowed" }, 403);
+  if (f.mimeType === SHEET_MIME) return publicDrive(url, env, ctx);
+  const r = await api(`files/${id}?alt=media`);
+  if (!r.ok) return json({ error: "download_failed", message: await r.text() }, r.status);
+  return new Response(r.body, { headers: { "content-type": r.headers.get("content-type") || "application/octet-stream", "cache-control": "public, max-age=120", "x-file-name": encodeURIComponent(f.name || ""), "x-file-modified": f.modifiedTime || "" } });
+}
+
 async function drive(url, env, ctx) {
+  if (!env.GOOGLE_SERVICE_ACCOUNT && env.GOOGLE_API_KEY) return apiKeyDrive(url, env, ctx);
   if (!env.GOOGLE_SERVICE_ACCOUNT) return publicDrive(url, env, ctx);
   const folder = env.DRIVE_FOLDER_ID || DEFAULT_FOLDER;
+  const folders = [folder, env.DRIVE_FOLDER_ID2 || DEFAULT_FOLDER2];
   const extra = String(env.EXTRA_FILE_IDS || DEFAULT_EXTRA).split(",").map(s => s.trim()).filter(Boolean);
   const token = await accessToken(env);
   const api = (path) => fetch("https://www.googleapis.com/drive/v3/" + path, { headers: { Authorization: "Bearer " + token } });
 
   if (url.searchParams.get("list")) {
-    const q = encodeURIComponent(`'${folder}' in parents and trashed = false`);
+    const q = encodeURIComponent("(" + folders.map(f => `'${f}' in parents`).join(" or ") + ") and trashed = false");
     const r = await api(`files?q=${q}&orderBy=modifiedTime desc&pageSize=100&fields=files(id,name,mimeType,modifiedTime,size)&supportsAllDrives=true&includeItemsFromAllDrives=true`);
     if (!r.ok) return json({ error: "list_failed", message: await r.text() }, r.status);
     const files = (await r.json()).files || [];
@@ -99,7 +135,7 @@ async function drive(url, env, ctx) {
   if (!meta.ok) return json({ error: "not_found", message: await meta.text() }, meta.status);
   const m = await meta.json();
   // only files in the PDI folder, or the listed extra files, can be read
-  if (!(m.parents || []).includes(folder) && !extra.includes(id)) return json({ error: "not_allowed" }, 403);
+  if (!(m.parents || []).some(x => folders.includes(x)) && !extra.includes(id)) return json({ error: "not_allowed" }, 403);
   const r = m.mimeType === SHEET_MIME
     ? await api(`files/${id}/export?mimeType=text/csv`)
     : await api(`files/${id}?alt=media&supportsAllDrives=true`);
